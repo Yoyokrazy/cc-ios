@@ -271,24 +271,45 @@ struct GameView: UIViewRepresentable {
 
         private func presentNewerSavePrompt(data: Data, in webView: WKWebView) {
             guard let presenter = Self.topViewController(from: webView) else { return }
-            let alert = UIAlertController(
-                title: "Newer Save Detected",
-                message: "A newer CrossCode save was found in your sync hub. Load it? "
-                    + "Your current on-device save will be replaced.",
-                preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "Keep Mine", style: .cancel))
-            alert.addAction(UIAlertAction(title: "Load", style: .default) { [weak webView] _ in
+
+            // Show WHAT diverged (area / level / playtime / autosave-vs-manual), not an opaque yes/no.
+            let summaries = SaveSync.consentProvider?.consentSummaries(forRemote: data) ?? []
+            var message = "A different CrossCode save is in your sync hub"
+            if summaries.isEmpty {
+                message += "."
+            } else {
+                message += ":\n\n• " + summaries.joined(separator: "\n• ")
+            }
+            message += "\n\nKeep Both adds it alongside your save (pick or delete it in the in-game Load menu). "
+                + "Load Cloud replaces your current save. Keep Mine ignores the cloud copy."
+
+            let alert = UIAlertController(title: "Save Conflict", message: message, preferredStyle: .alert)
+
+            // Primary, non-destructive: keep both via slot-merge.
+            alert.addAction(UIAlertAction(title: "Keep Both", style: .default) { [weak self, weak webView] _ in
+                guard let webView = webView,
+                      let merged = SaveSync.consentProvider?.mergeConsent(data) else { return }
+                self?.injectAndReload(save: merged, in: webView)
+            })
+            // Destructive: replace local with the cloud save.
+            alert.addAction(UIAlertAction(title: "Load Cloud", style: .destructive) { [weak self, weak webView] _ in
                 guard let webView = webView,
                       SaveSync.consentProvider?.applyPulledConsent(data) == true else { return }
-                // The save-injection user script is baked with the launch-time snapshot and is guarded
-                // to run once per browsing context, so a plain reload won't pick up the new file. Set
-                // localStorage directly (base64 → atob to dodge escaping), leave the guard in place so
-                // the stale snapshot can't clobber it, then reload so the game boots from the new save.
-                let b64 = data.base64EncodedString()
-                let js = "try{window.localStorage.setItem('cc.save', atob('\(b64)'));}catch(e){}"
-                webView.evaluateJavaScript(js) { _, _ in webView.reload() }
+                self?.injectAndReload(save: data, in: webView)
             })
+            // Cancel: keep the on-device save (the hub copy is left for the next launch / consent check).
+            alert.addAction(UIAlertAction(title: "Keep Mine", style: .cancel))
             presenter.present(alert, animated: true)
+        }
+
+        /// Make `save` the live save and reboot the game from it. The save-injection user script is
+        /// baked with the launch-time snapshot and guarded to run once per browsing context, so a plain
+        /// reload won't pick up a newly-written file. Set localStorage directly (base64 → atob to dodge
+        /// escaping), leave the guard in place so the stale snapshot can't clobber it, then reload.
+        private func injectAndReload(save: Data, in webView: WKWebView) {
+            let b64 = save.base64EncodedString()
+            let js = "try{window.localStorage.setItem('cc.save', atob('\(b64)'));}catch(e){}"
+            webView.evaluateJavaScript(js) { _, _ in webView.reload() }
         }
 
         /// Top-most presented view controller from the web view's window (to present the alert over

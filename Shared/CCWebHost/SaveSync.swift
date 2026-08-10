@@ -63,6 +63,23 @@ public protocol ConsentPullProvider: AnyObject {
     /// Apply bytes the user accepted (write them to the local save file + record the sync point).
     /// Returns success.
     func applyPulledConsent(_ data: Data) -> Bool
+
+    /// One-line summaries (already human-readable, host stays UIKit/format-free) of the saves the
+    /// remote would CONTRIBUTE that the local save doesn't already have — i.e. what a "Keep Both" merge
+    /// would add. Drives the conflict prompt so the user sees *what* diverged (area / level / playtime /
+    /// autosave-vs-manual) instead of an opaque yes/no. Default: `[]` (no preview).
+    func consentSummaries(forRemote data: Data) -> [String]
+
+    /// **Keep both** — merge the remote's divergent saves into the local save as extra slots (no
+    /// clobber), write it, and return the merged bytes for the host to inject + reload (so both saves
+    /// appear in CrossCode's own Load menu). Returns `nil` if a safe merge wasn't possible, in which
+    /// case the caller leaves the local save untouched. Default: `nil` (capability absent).
+    func mergeConsent(_ data: Data) -> Data?
+}
+
+public extension ConsentPullProvider {
+    func consentSummaries(forRemote data: Data) -> [String] { [] }
+    func mergeConsent(_ data: Data) -> Data? { nil }
 }
 
 /// Process-wide registry for the optional save-sync provider.
